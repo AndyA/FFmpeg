@@ -188,6 +188,7 @@ Individual component options:
 External library support:
   --enable-avisynth        enable reading of AviSynth script files [no]
   --disable-bzlib          disable bzlib [autodetect]
+  --enable-decklink        enable Blackmagic Decklink
   --enable-fontconfig      enable fontconfig
   --enable-frei0r          enable frei0r video filtering
   --enable-gnutls          enable gnutls [no]
@@ -1155,6 +1156,7 @@ EXTERNAL_LIBRARY_LIST="
     avisynth
     bzlib
     crystalhd
+    decklink
     fontconfig
     frei0r
     gnutls
