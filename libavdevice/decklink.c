@@ -34,15 +34,14 @@
 #include <sys/mman.h>
 #include <sys/time.h>
 #define _LINUX_TIME_H 1
-#include <linux/videodev.h>
 #include <time.h>
 #include "avdevice.h"
 
 typedef struct {
-  AVClass *class;
+  AVClass *cl;
 } VideoData;
 
-static int grab_read_header(AVFormatContext *s1, AVFormatParameters *ap) {
+static int grab_read_header(AVFormatContext *s1) {
   return 1;
 }
 
