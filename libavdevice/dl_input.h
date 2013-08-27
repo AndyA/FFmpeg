@@ -1,14 +1,12 @@
-#ifndef __CAPTURE_H__
-#define __CAPTURE_H__
-
-#include <stdio.h>
+#ifndef __DL_INPUT_H__
+#define __DL_INPUT_H__
 
 #include "DeckLinkAPI.h"
 #include "dl_common.h"
 
 class DeckLinkCaptureDelegate : public IDeckLinkInputCallback {
 public:
-  DeckLinkCaptureDelegate(struct decklink_pipe *pipe);
+  DeckLinkCaptureDelegate(AVFormatContext *ctx);
   ~DeckLinkCaptureDelegate();
 
   virtual HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, LPVOID *ppv) {
@@ -27,7 +25,13 @@ public:
 private:
   ULONG m_refCount;
   pthread_mutex_t m_mutex;
-  struct decklink_pipe *m_pipe;
+  AVFormatContext *m_ctx;
+};
+
+struct decklink_work {
+  IDeckLink *dl;
+  IDeckLinkInput *dli;
+  DeckLinkCaptureDelegate *delegate;
 };
 
 #endif

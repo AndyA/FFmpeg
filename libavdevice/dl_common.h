@@ -1,7 +1,5 @@
-#ifndef __CAPTURE_H__
-#define __CAPTURE_H__
-
-#include <stdio.h>
+#ifndef __DL_COMMON_H__
+#define __DL_COMMON_H__
 
 #ifdef __cplusplus
 extern "C" {
@@ -9,6 +7,7 @@ extern "C" {
 
 #include <fcntl.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/time.h>
@@ -26,13 +25,19 @@ extern "C" {
 #include "libavutil/opt.h"
 #include "libavutil/rational.h"
 
-struct {
-  pthread_mutex_t mutex;
-  pthread_cond_t got_input;
-  AVFifoBuffer   *fifo;;
-} decklink_pipe;
+  struct decklink_work;
 
-int dl_startup(void);
+  struct decklink_pipe {
+    AVClass *cl;
+    struct decklink_work *w;
+    pthread_t worker;
+    pthread_mutex_t mutex;
+    pthread_cond_t non_empty, non_full;
+    AVFifoBuffer *fifo;
+  };
+
+  int dl_startup(AVFormatContext *ctx);
+  int dl_shutdown(AVFormatContext *ctx);
 
 #ifdef __cplusplus
 }

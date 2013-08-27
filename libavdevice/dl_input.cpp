@@ -36,25 +36,8 @@
 #include "DeckLinkAPI.h"
 #include "dl_input.h"
 
-pthread_mutex_t sleepMutex;
-pthread_cond_t sleepCond;
-
-IDeckLink *deckLink;
-IDeckLinkInput *deckLinkInput;
-IDeckLinkDisplayModeIterator *displayModeIterator;
-
-static BMDTimecodeFormat g_timecodeFormat = 0;
-static int g_videoModeIndex = -1;
-static int g_audioChannels = 2;
-static int g_audioSampleDepth = 16;
-const char *g_videoOutputFile = NULL;
-const char *g_audioOutputFile = NULL;
-static int g_maxFrames = -1;
-
-static unsigned long frameCount = 0;
-
-DeckLinkCaptureDelegate::DeckLinkCaptureDelegate(decklink_pipe *pipe) :
-  m_pipe(pipe), m_refCount(0) {
+DeckLinkCaptureDelegate::DeckLinkCaptureDelegate(AVFormatContext *ctx) :
+  m_ctx(ctx), m_refCount(0) {
   pthread_mutex_init(&m_mutex, NULL);
 }
 
@@ -84,81 +67,83 @@ ULONG DeckLinkCaptureDelegate::Release(void) {
 }
 
 HRESULT DeckLinkCaptureDelegate::VideoInputFrameArrived(
-  IDeckLinkVideoInputFrame *videoFrame, IDeckLinkAudioInputPacket *audioFrame) {
-  IDeckLinkVideoFrame *rightEyeFrame = NULL;
-  IDeckLinkVideoFrame3DExtensions *threeDExtensions = NULL;
-  void *frameBytes;
-  void *audioFrameBytes;
+  IDeckLinkVideoInputFrame *vf, IDeckLinkAudioInputPacket *af) {
+  struct decklink_pipe *self = (struct decklink_pipe *) m_ctx->priv_data;
+  int rc;
+
+  pthread_mutex_lock(&self->mutex);
+
+  if (!self->fifo) goto done;
 
   // Handle Video Frame
-  if (videoFrame) {
-    // If 3D mode is enabled we retreive the 3D extensions interface which gives.
-    // us access to the right eye frame by calling GetFrameForRightEye() .
-    if ((videoFrame->QueryInterface(IID_IDeckLinkVideoFrame3DExtensions,
-                                    (void **) &threeDExtensions) != S_OK) ||
-        (threeDExtensions->GetFrameForRightEye(&rightEyeFrame) != S_OK)) {
-      rightEyeFrame = NULL;
-    }
+  if (vf) {
 
-    if (threeDExtensions)
-      threeDExtensions->Release();
-
-    if (videoFrame->GetFlags() & bmdFrameHasNoInputSource) {
-      fprintf(stderr, "Frame received (#%lu) - No input signal detected\n", frameCount);
+    if (vf->GetFlags() & bmdFrameHasNoInputSource) {
+      av_log(m_ctx, AV_LOG_WARNING, "No input detected\n");
     }
     else {
-      const char *timecodeString = NULL;
-      if (g_timecodeFormat != 0) {
-        IDeckLinkTimecode *timecode;
-        if (videoFrame->GetTimecode(g_timecodeFormat, &timecode) == S_OK) {
-          timecode->GetString(&timecodeString);
-        }
+      AVPacket pkt;
+      size_t size = vf->GetRowBytes() * vf->GetHeight();
+      void *bytes;
+      BMDTimeValue frame_time, frame_duration;
+
+      if (av_fifo_space(self->fifo) < (int) sizeof(pkt)) {
+        av_log(m_ctx, AV_LOG_ERROR, "Fifo overrun\n");
+        goto done;
       }
 
-      fprintf(stderr, "Frame received (#%lu) [%s] - %s - Size: %li bytes\n",
-              frameCount,
-              timecodeString != NULL ? timecodeString : "No timecode",
-              rightEyeFrame != NULL ? "Valid Frame (3D left/right)" : "Valid Frame",
-              videoFrame->GetRowBytes() * videoFrame->GetHeight());
-
-      if (timecodeString)
-        free((void *)timecodeString);
-
-#if 0
-      if (videoOutputFile != -1) {
-        videoFrame->GetBytes(&frameBytes);
-        write(videoOutputFile, frameBytes,
-              videoFrame->GetRowBytes() * videoFrame->GetHeight());
-
-        if (rightEyeFrame) {
-          rightEyeFrame->GetBytes(&frameBytes);
-          write(videoOutputFile, frameBytes,
-                videoFrame->GetRowBytes() * videoFrame->GetHeight());
-        }
+      if (rc = av_new_packet(&pkt, size), rc < 0) {
+        av_log(m_ctx, AV_LOG_ERROR, "Could not create packet of size %d\n", size);
+        goto done;
       }
-#endif
-    }
 
-    if (rightEyeFrame)
-      rightEyeFrame->Release();
+      vf->GetBytes(&bytes);
+      memcpy(pkt.data, bytes, size);
 
-    frameCount++;
+      vf->GetStreamTime(&frame_time, &frame_duration, 1000000);
+      pkt.dts = pkt.pts = frame_time;
+      pkt.stream_index = 0;
 
-    if (g_maxFrames > 0 && frameCount >= g_maxFrames) {
-      pthread_cond_signal(&sleepCond);
+//      av_log(m_ctx, AV_LOG_INFO, "video frame: pts=%llu\n", (unsigned long long) pkt.pts);
+
+      av_fifo_generic_write(self->fifo, &pkt, sizeof(pkt), NULL);
     }
   }
 
   // Handle Audio Frame
-  if (audioFrame) {
-#if 0
-    if (audioOutputFile != -1) {
-      audioFrame->GetBytes(&audioFrameBytes);
-      write(audioOutputFile, audioFrameBytes,
-            audioFrame->GetSampleFrameCount() * g_audioChannels * (g_audioSampleDepth / 8));
+  if (af) {
+    AVPacket pkt;
+    size_t size = af->GetSampleFrameCount() * 2 * 2;
+    void *bytes;
+    BMDTimeValue packet_time;
+
+    if (av_fifo_space(self->fifo) < (int) sizeof(pkt)) {
+      av_log(m_ctx, AV_LOG_ERROR, "Fifo overrun\n");
+      goto done;
     }
-#endif
+
+    if (rc = av_new_packet(&pkt, size), rc < 0) {
+      av_log(m_ctx, AV_LOG_ERROR, "Could not create packet of size %d\n", size);
+      goto done;
+    }
+
+    af->GetBytes(&bytes);
+    memcpy(pkt.data, bytes, size);
+
+    af->GetPacketTime(&packet_time, 1000000);
+    pkt.pts = packet_time;
+    pkt.stream_index = 1;
+
+//    av_log(m_ctx, AV_LOG_INFO, "audio frame: pts=%llu\n", (unsigned long long) pkt.pts);
+
+    av_fifo_generic_write(self->fifo, &pkt, sizeof(pkt), NULL);
   }
+
+  pthread_cond_signal(&self->non_empty);
+
+done:
+  pthread_mutex_unlock(&self->mutex);
+
   return S_OK;
 }
 
@@ -169,292 +154,75 @@ HRESULT DeckLinkCaptureDelegate::VideoInputFormatChanged(
   return S_OK;
 }
 
-int usage(int status) {
-  HRESULT result;
-  IDeckLinkDisplayMode *displayMode;
-  int displayModeCount = 0;
+static int dl_find(AVFormatContext *ctx, IDeckLink **dl) {
+  IDeckLinkIterator *dli = CreateDeckLinkIteratorInstance();
+  HRESULT rc;
 
-  fprintf(stderr,
-          "Usage: bm2ff -m <mode id> [OPTIONS]\n"
-          "\n"
-          " -m <mode id>:\n"
-         );
-
-  while (displayModeIterator->Next(&displayMode) == S_OK) {
-    char *displayModeString = NULL;
-
-    result = displayMode->GetName((const char **) &displayModeString);
-    if (result == S_OK) {
-      BMDTimeValue frameRateDuration, frameRateScale;
-      displayMode->GetFrameRate(&frameRateDuration, &frameRateScale);
-
-      fprintf(stderr, " %2d: %-20s \t %li x %li \t %g FPS\n",
-              displayModeCount, displayModeString,
-              displayMode->GetWidth(), displayMode->GetHeight(),
-              (double)frameRateScale / (double)frameRateDuration);
-
-      free(displayModeString);
-      displayModeCount++;
-    }
-
-    // Release the IDeckLinkDisplayMode object to prevent a leak
-    displayMode->Release();
+  if (!dli) {
+    av_log(ctx, AV_LOG_ERROR,
+           "Can't find a Decklink device. Are the drivers installed?\n");
+    return AVERROR_EXTERNAL;
   }
 
-  fprintf(stderr,
-          " -p <pixelformat>\n"
-          " 0: 8 bit YUV (4:2:2) (default)\n"
-          " 1: 10 bit YUV (4:2:2)\n"
-          " 2: 10 bit RGB (4:4:4)\n"
-          " -t <format> Print timecode\n"
-          " rp188: RP 188\n"
-          " vitc: VITC\n"
-          " serial: Serial Timecode\n"
-          " -f <filename> Filename raw video will be written to\n"
-          " -a <filename> Filename raw audio will be written to\n"
-          " -c <channels> Audio Channels (2, 8 or 16 - default is 2)\n"
-          " -s <depth> Audio Sample Depth (16 or 32 - default is 16)\n"
-          " -n <frames> Number of frames to bm2ff (default is unlimited)\n"
-          " -3 Capture Stereoscopic 3D (Requires 3D Hardware support)\n"
-          "\n"
-          "Capture video and/or audio to a file. Raw video and/or audio can be viewed "
-          "with mplayer eg:\n"
-          "\n"
-          " Capture -m2 -n 50 -f video.raw -a audio.raw\n"
-          " mplayer video.raw -demuxer rawvideo -rawvideo pal:uyvy "
-          "-audiofile audio.raw -audio-demuxer 20 -rawaudio rate=48000\n"
-         );
+  if (rc = dli->Next(dl), rc != S_OK) {
+    av_log(ctx, AV_LOG_ERROR, "No Decklink devices found.\n");
+    return AVERROR_EXTERNAL;
+  }
 
-  exit(status);
+  dli->Release();
+  return 0;
 }
 
-#if 0
-int main(int argc, char *argv[]) {
-  IDeckLinkIterator *deckLinkIterator = CreateDeckLinkIteratorInstance();
-  DeckLinkCaptureDelegate *delegate;
-  IDeckLinkDisplayMode *displayMode;
-  BMDVideoInputFlags inputFlags = 0;
-  BMDDisplayMode selectedDisplayMode = bmdModeNTSC;
-  BMDPixelFormat pixelFormat = bmdFormat8BitYUV;
-  int displayModeCount = 0;
-  int exitStatus = 1;
-  int ch;
-  bool foundDisplayMode = false;
-  HRESULT result;
-  FILE *vo = NULL, *ao = NULL;
+extern "C" int dl_startup(AVFormatContext *ctx) {
+  struct decklink_pipe *self = (struct decklink_pipe *) ctx->priv_data;
+  struct decklink_work *w = (struct decklink_work *) av_mallocz(sizeof(*w));
+  int rc;
 
-  pthread_mutex_init(&sleepMutex, NULL);
-  pthread_cond_init(&sleepCond, NULL);
+  self->w = w;
 
-  if (!deckLinkIterator) {
-    fprintf(stderr, "This application requires the DeckLink drivers installed.\n");
-    goto bail;
+  if ((rc = dl_find(ctx, &w->dl))) goto bail;
+
+  if (w->dl->QueryInterface(IID_IDeckLinkInput, (void **)&w->dli) != S_OK) {
+    av_log(ctx, AV_LOG_ERROR, "No inputs found\n");
+    goto bail_err;
   }
 
-  /* Connect to the first DeckLink instance */
-  result = deckLinkIterator->Next(&deckLink);
-  if (result != S_OK) {
-    fprintf(stderr, "No DeckLink PCI cards found.\n");
-    goto bail;
+  w->delegate = new DeckLinkCaptureDelegate(ctx);
+  w->dli->SetCallback(w->delegate);
+
+  if (w->dli->EnableVideoInput(bmdModeHD1080i50, bmdFormat8BitYUV, 0) != S_OK) {
+    av_log(ctx, AV_LOG_ERROR, "Failed to enable video input\n");
+    goto bail_err;
   }
 
-  if (deckLink->QueryInterface(IID_IDeckLinkInput, (void **)&deckLinkInput) != S_OK)
-    goto bail;
-
-  delegate = new DeckLinkCaptureDelegate(NULL, NULL);
-  deckLinkInput->SetCallback(delegate);
-
-  // Obtain an IDeckLinkDisplayModeIterator to enumerate the display modes supported on output
-  result = deckLinkInput->GetDisplayModeIterator(&displayModeIterator);
-  if (result != S_OK) {
-    fprintf(stderr,
-            "Could not obtain the video output display mode iterator - result = %08x\n",
-            result);
-    goto bail;
+  if (w->dli->EnableAudioInput(bmdAudioSampleRate48kHz, 16, 2) != S_OK) {
+    av_log(ctx, AV_LOG_ERROR, "Failed to enable audio input\n");
+    goto bail_err;
   }
 
-  // Parse command line options
-  while ((ch = getopt(argc, argv, "?h3c:s:f:a:m:n:p:t:")) != -1) {
-    switch (ch) {
-    case 'm':
-      g_videoModeIndex = atoi(optarg);
-      break;
-    case 'c':
-      g_audioChannels = atoi(optarg);
-      if (g_audioChannels != 2 &&
-          g_audioChannels != 8 &&
-          g_audioChannels != 16) {
-        fprintf(stderr, "Invalid argument: Audio Channels must be either 2, 8 or 16\n");
-        goto bail;
-      }
-      break;
-    case 's':
-      g_audioSampleDepth = atoi(optarg);
-      if (g_audioSampleDepth != 16 && g_audioSampleDepth != 32) {
-        fprintf(stderr,
-                "Invalid argument: Audio Sample Depth must be either 16 bits or 32 bits\n");
-        goto bail;
-      }
-      break;
-    case 'f':
-      g_videoOutputFile = optarg;
-      break;
-    case 'a':
-      g_audioOutputFile = optarg;
-      break;
-    case 'n':
-      g_maxFrames = atoi(optarg);
-      break;
-    case '3':
-      inputFlags |= bmdVideoInputDualStream3D;
-      break;
-    case 'p':
-      switch (atoi(optarg)) {
-      case 0:
-        pixelFormat = bmdFormat8BitYUV;
-        break;
-      case 1:
-        pixelFormat = bmdFormat10BitYUV;
-        break;
-      case 2:
-        pixelFormat = bmdFormat10BitRGB;
-        break;
-      default:
-        fprintf(stderr, "Invalid argument: Pixel format %d is not valid", atoi(optarg));
-        goto bail;
-      }
-      break;
-    case 't':
-      if (!strcmp(optarg, "rp188"))
-        g_timecodeFormat = bmdTimecodeRP188Any;
-      else if (!strcmp(optarg, "vitc"))
-        g_timecodeFormat = bmdTimecodeVITC;
-      else if (!strcmp(optarg, "serial"))
-        g_timecodeFormat = bmdTimecodeSerial;
-      else {
-        fprintf(stderr, "Invalid argument: Timecode format \"%s\" is invalid\n", optarg);
-        goto bail;
-      }
-      break;
-    case '?':
-    case 'h':
-      usage(0);
-    }
+  if (w->dli->StartStreams() != S_OK) {
+    av_log(ctx, AV_LOG_ERROR, "Failed to enable audio input\n");
+    goto bail_err;
   }
 
-  if (g_videoModeIndex < 0) {
-    fprintf(stderr, "No video mode specified\n");
-    usage(0);
-  }
+  return 0;
 
-  if (g_videoOutputFile != NULL) {
-    if (vo = fopen(g_videoOutputFile, "wb"), !vo) {
-      fprintf(stderr, "Could not open video output file \"%s\"\n", g_videoOutputFile);
-      goto bail;
-    }
-    delegate->SetVideoFile(vo);
-  }
-
-  if (g_audioOutputFile != NULL) {
-    if (ao = fopen(g_audioOutputFile, "wb"), !ao) {
-      fprintf(stderr, "Could not open audio output file \"%s\"\n", g_audioOutputFile);
-      goto bail;
-    }
-    delegate->SetAudioFile(ao);
-  }
-
-  while (displayModeIterator->Next(&displayMode) == S_OK) {
-    if (g_videoModeIndex == displayModeCount) {
-      BMDDisplayModeSupport result;
-      const char *displayModeName;
-
-      foundDisplayMode = true;
-      displayMode->GetName(&displayModeName);
-      selectedDisplayMode = displayMode->GetDisplayMode();
-
-      deckLinkInput->DoesSupportVideoMode(
-        selectedDisplayMode, pixelFormat, bmdVideoInputFlagDefault, &result, NULL);
-
-      if (result == bmdDisplayModeNotSupported) {
-        fprintf(stderr,
-                "The display mode %s is not supported with the selected pixel format\n",
-                displayModeName);
-        goto bail;
-      }
-
-      if (inputFlags & bmdVideoInputDualStream3D) {
-        if (!(displayMode->GetFlags() & bmdDisplayModeSupports3D)) {
-          fprintf(stderr, "The display mode %s is not supported with 3D\n", displayModeName);
-          goto bail;
-        }
-      }
-
-      break;
-    }
-    displayModeCount++;
-    displayMode->Release();
-  }
-
-  if (!foundDisplayMode) {
-    fprintf(stderr, "Invalid mode %d specified\n", g_videoModeIndex);
-    goto bail;
-  }
-
-  result = deckLinkInput->EnableVideoInput(selectedDisplayMode, pixelFormat, inputFlags);
-  if (result != S_OK) {
-    fprintf(stderr,
-            "Failed to enable video input. Is another application using the card?\n");
-    goto bail;
-  }
-
-  result = deckLinkInput->EnableAudioInput(bmdAudioSampleRate48kHz,
-           g_audioSampleDepth, g_audioChannels);
-  if (result != S_OK) {
-    goto bail;
-  }
-
-  result = deckLinkInput->StartStreams();
-  if (result != S_OK) {
-    goto bail;
-  }
-
-  // All Okay.
-  exitStatus = 0;
-
-  // Block main thread until signal occurs
-  pthread_mutex_lock(&sleepMutex);
-  pthread_cond_wait(&sleepCond, &sleepMutex);
-  pthread_mutex_unlock(&sleepMutex);
-  fprintf(stderr, "Stopping bm2ff\n");
-
+bail_err:
+  rc = AVERROR_EXTERNAL;
 bail:
-
-  if (vo) fclose(vo);
-  if (ao) fclose(ao);
-
-  if (displayModeIterator != NULL) {
-    displayModeIterator->Release();
-    displayModeIterator = NULL;
-  }
-
-  if (deckLinkInput != NULL) {
-    deckLinkInput->Release();
-    deckLinkInput = NULL;
-  }
-
-  if (deckLink != NULL) {
-    deckLink->Release();
-    deckLink = NULL;
-  }
-
-  if (deckLinkIterator != NULL)
-    deckLinkIterator->Release();
-
-  return exitStatus;
+  dl_shutdown(ctx);
+  return rc;
 }
-#endif
 
-extern "C" int dl_startup(void) {
+extern "C" int dl_shutdown(AVFormatContext *ctx) {
+  struct decklink_pipe *self = (struct decklink_pipe *) ctx->priv_data;
+  struct decklink_work *w = self->w;
+
+  if (w->dli) w->dli->Release();
+  if (w->dl) w->dl->Release();
+  if (w->delegate) w->delegate->Release();
+
+  av_free(self->w);
   return 0;
 }
 
