@@ -103,6 +103,7 @@ HRESULT DeckLinkCaptureDelegate::VideoInputFrameArrived(
       vf->GetStreamTime(&frame_time, &frame_duration, 1000000);
       pkt.dts = pkt.pts = frame_time;
       pkt.stream_index = 0;
+      pkt.flags |= AV_PKT_FLAG_KEY;
 
 //      av_log(m_ctx, AV_LOG_INFO, "video frame: pts=%llu\n", (unsigned long long) pkt.pts);
 
@@ -133,6 +134,7 @@ HRESULT DeckLinkCaptureDelegate::VideoInputFrameArrived(
     af->GetPacketTime(&packet_time, 1000000);
     pkt.pts = packet_time;
     pkt.stream_index = 1;
+    pkt.flags |= AV_PKT_FLAG_KEY;
 
 //    av_log(m_ctx, AV_LOG_INFO, "audio frame: pts=%llu\n", (unsigned long long) pkt.pts);
 

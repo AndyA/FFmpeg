@@ -90,7 +90,8 @@ static int dl_read_header(AVFormatContext *ctx) {
   stm->codec->bit_rate = 1920 * 1080 * 2 * 25 * 8;
   stm->avg_frame_rate.num = 25;
   stm->avg_frame_rate.den = 1;
-  stm->codec->time_base = stm->avg_frame_rate;
+  stm->codec->time_base.num = stm->avg_frame_rate.den;
+  stm->codec->time_base.den = stm->avg_frame_rate.num;
 
   avpriv_set_pts_info(stm, 64, 1, 1000000);
 
