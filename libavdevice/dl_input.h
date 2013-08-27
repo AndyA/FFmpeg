@@ -4,10 +4,11 @@
 #include <stdio.h>
 
 #include "DeckLinkAPI.h"
+#include "dl_common.h"
 
 class DeckLinkCaptureDelegate : public IDeckLinkInputCallback {
 public:
-  DeckLinkCaptureDelegate();
+  DeckLinkCaptureDelegate(struct decklink_pipe *pipe);
   ~DeckLinkCaptureDelegate();
 
   virtual HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, LPVOID *ppv) {
@@ -26,6 +27,7 @@ public:
 private:
   ULONG m_refCount;
   pthread_mutex_t m_mutex;
+  struct decklink_pipe *m_pipe;
 };
 
 #endif

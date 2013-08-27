@@ -33,9 +33,10 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/time.h>
-#define _LINUX_TIME_H 1
 #include <time.h>
 #include "avdevice.h"
+
+#include "dl_common.h"
 
 typedef struct {
   AVClass *cl;
@@ -66,7 +67,7 @@ static const AVClass decklink_class = {
 
 AVInputFormat ff_decklink_demuxer = {
   .name           = "decklink",
-  .long_name      = NULL_IF_CONFIG_SMALL("Blackmagic Decklink device grab"),
+  .long_name      = NULL_IF_CONFIG_SMALL("Blackmagic Decklink device input"),
   .priv_data_size = sizeof(VideoData),
   .read_header    = grab_read_header,
   .read_packet    = grab_read_packet,

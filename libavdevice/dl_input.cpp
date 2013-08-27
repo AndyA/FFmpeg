@@ -53,8 +53,8 @@ static int g_maxFrames = -1;
 
 static unsigned long frameCount = 0;
 
-DeckLinkCaptureDelegate::DeckLinkCaptureDelegate() :
-  m_refCount(0) {
+DeckLinkCaptureDelegate::DeckLinkCaptureDelegate(decklink_pipe *pipe) :
+  m_pipe(pipe), m_refCount(0) {
   pthread_mutex_init(&m_mutex, NULL);
 }
 
@@ -453,4 +453,8 @@ bail:
   return exitStatus;
 }
 #endif
+
+extern "C" int dl_startup(void) {
+  return 0;
+}
 
