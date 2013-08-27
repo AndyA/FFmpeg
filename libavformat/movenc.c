@@ -3393,6 +3393,8 @@ static int mov_create_chapter_track(AVFormatContext *s, int tracknum)
     track->tag = MKTAG('t','e','x','t');
     track->timescale = MOV_TIMESCALE;
     track->enc = avcodec_alloc_context3(NULL);
+    if (!track->enc)
+        return AVERROR(ENOMEM);
     track->enc->codec_type = AVMEDIA_TYPE_SUBTITLE;
 #if 0
     // These properties are required to make QT recognize the chapter track
@@ -3460,6 +3462,8 @@ static int mov_create_chapter_track(AVFormatContext *s, int tracknum)
             len      = strlen(t->value);
             pkt.size = len + 2;
             pkt.data = av_malloc(pkt.size);
+            if (!pkt.data)
+                return AVERROR(ENOMEM);
             AV_WB16(pkt.data, len);
             memcpy(pkt.data + 2, t->value, len);
             ff_mov_write_packet(s, &pkt);
@@ -3562,6 +3566,32 @@ static void enable_tracks(AVFormatContext *s)
             break;
         }
     }
+}
+
+static void mov_free(AVFormatContext *s)
+{
+    MOVMuxContext *mov = s->priv_data;
+    int i;
+
+    if (mov->chapter_track) {
+        if (mov->tracks[mov->chapter_track].enc)
+            av_freep(&mov->tracks[mov->chapter_track].enc->extradata);
+        av_freep(&mov->tracks[mov->chapter_track].enc);
+    }
+
+    for (i = 0; i < mov->nb_streams; i++) {
+        if (mov->tracks[i].tag == MKTAG('r','t','p',' '))
+            ff_mov_close_hinting(&mov->tracks[i]);
+        else if (mov->tracks[i].tag == MKTAG('t','m','c','d') && mov->nb_meta_tmcd)
+            av_freep(&mov->tracks[i].enc);
+        av_freep(&mov->tracks[i].cluster);
+        av_freep(&mov->tracks[i].frag_info);
+
+        if (mov->tracks[i].vos_len)
+            av_freep(&mov->tracks[i].vos_data);
+    }
+
+    av_freep(&mov->tracks);
 }
 
 static int mov_write_header(AVFormatContext *s)
@@ -3804,7 +3834,8 @@ static int mov_write_header(AVFormatContext *s)
         mov->time += 0x7C25B080; // 1970 based -> 1904 based
 
     if (mov->chapter_track)
-        mov_create_chapter_track(s, mov->chapter_track);
+        if (mov_create_chapter_track(s, mov->chapter_track) < 0)
+            goto error;
 
     if (mov->flags & FF_MOV_FLAG_RTP_HINT) {
         /* Initialize the hint tracks for each audio and video stream */
@@ -3849,7 +3880,7 @@ static int mov_write_header(AVFormatContext *s)
 
     return 0;
  error:
-    av_freep(&mov->tracks);
+    mov_free(s);
     return -1;
 }
 
@@ -3989,7 +4020,8 @@ static int mov_write_trailer(AVFormatContext *s)
     if (!mov->chapter_track && !(mov->flags & FF_MOV_FLAG_FRAGMENT)) {
         if (mov->mode & (MODE_MP4|MODE_MOV|MODE_IPOD) && s->nb_chapters) {
             mov->chapter_track = mov->nb_streams++;
-            mov_create_chapter_track(s, mov->chapter_track);
+            if ((res = mov_create_chapter_track(s, mov->chapter_track)) < 0)
+                goto error;
         }
     }
 
@@ -4039,16 +4071,7 @@ static int mov_write_trailer(AVFormatContext *s)
         mov_write_mfra_tag(pb, mov);
     }
 
-    if (mov->chapter_track) {
-        av_freep(&mov->tracks[mov->chapter_track].enc->extradata);
-        av_freep(&mov->tracks[mov->chapter_track].enc);
-    }
-
     for (i = 0; i < mov->nb_streams; i++) {
-        if (mov->tracks[i].tag == MKTAG('r','t','p',' '))
-            ff_mov_close_hinting(&mov->tracks[i]);
-        else if (mov->tracks[i].tag == MKTAG('t','m','c','d') && mov->nb_meta_tmcd)
-            av_freep(&mov->tracks[i].enc);
         if (mov->flags & FF_MOV_FLAG_FRAGMENT &&
             mov->tracks[i].vc1_info.struct_offset && s->pb->seekable) {
             int64_t off = avio_tell(pb);
@@ -4059,14 +4082,10 @@ static int mov_write_trailer(AVFormatContext *s)
                 avio_seek(pb, off, SEEK_SET);
             }
         }
-        av_freep(&mov->tracks[i].cluster);
-        av_freep(&mov->tracks[i].frag_info);
-
-        if (mov->tracks[i].vos_len)
-            av_freep(&mov->tracks[i].vos_data);
     }
 
-    av_freep(&mov->tracks);
+error:
+    mov_free(s);
 
     return res;
 }
