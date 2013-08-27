@@ -220,9 +220,10 @@ extern "C" int dl_shutdown(AVFormatContext *ctx) {
   struct decklink_pipe *self = (struct decklink_pipe *) ctx->priv_data;
   struct decklink_work *w = self->w;
 
+  if (w->dli) w->dli->StopStreams();
+
   if (w->dli) w->dli->Release();
   if (w->dl) w->dl->Release();
-  if (w->delegate) w->delegate->Release();
 
   av_free(self->w);
   return 0;
