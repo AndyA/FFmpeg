@@ -3273,8 +3273,6 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
     trk->sample_count += samples_in_chunk;
     mov->mdat_size    += size;
 
-    avio_flush(pb);
-
     if (trk->hint_track >= 0 && trk->hint_track < mov->nb_streams)
         ff_mov_add_hinted_packet(s, pkt, trk->hint_track, trk->entry,
                                  reformatted_data, size);
@@ -3508,7 +3506,7 @@ static int mov_create_timecode_track(AVFormatContext *s, int index, int src_inde
     track->enc = avcodec_alloc_context3(NULL);
     track->enc->codec_type = AVMEDIA_TYPE_DATA;
     track->enc->codec_tag  = track->tag;
-    track->enc->time_base  = src_st->codec->time_base;
+    track->enc->time_base  = av_inv_q(rate);
 
     /* the tmcd track just contains one packet with the frame number */
     pkt.data = av_malloc(pkt.size);
@@ -3604,6 +3602,7 @@ static int mov_write_header(AVFormatContext *s)
     /* Set the FRAGMENT flag if any of the fragmentation methods are
      * enabled. */
     if (mov->max_fragment_duration || mov->max_fragment_size ||
+        (s->oformat && !strcmp(s->oformat->name, "ismv")) ||
         mov->flags & (FF_MOV_FLAG_EMPTY_MOOV |
                       FF_MOV_FLAG_FRAG_KEYFRAME |
                       FF_MOV_FLAG_FRAG_CUSTOM))
@@ -3612,9 +3611,11 @@ static int mov_write_header(AVFormatContext *s)
     /* faststart: moov at the beginning of the file, if supported */
     if (mov->flags & FF_MOV_FLAG_FASTSTART) {
         if ((mov->flags & FF_MOV_FLAG_FRAGMENT) ||
-            (s->flags & AVFMT_FLAG_CUSTOM_IO))
+            (s->flags & AVFMT_FLAG_CUSTOM_IO)) {
+            av_log(s, AV_LOG_WARNING, "The faststart flag is incompatible "
+                   "with fragmentation and custom IO, disabling faststart\n");
             mov->flags &= ~FF_MOV_FLAG_FASTSTART;
-        else
+        } else
             mov->reserved_moov_size = -1;
     }
 
@@ -3625,9 +3626,7 @@ static int mov_write_header(AVFormatContext *s)
     /* Non-seekable output is ok if using fragmentation. If ism_lookahead
      * is enabled, we don't support non-seekable output at all. */
     if (!s->pb->seekable &&
-        ((!(mov->flags & FF_MOV_FLAG_FRAGMENT) &&
-          strcmp(s->oformat->name, "ismv"))
-         || mov->ism_lookahead)) {
+        (!(mov->flags & FF_MOV_FLAG_FRAGMENT) || mov->ism_lookahead)) {
         av_log(s, AV_LOG_ERROR, "muxer does not support non seekable output\n");
         return -1;
     }
@@ -3812,8 +3811,7 @@ static int mov_write_header(AVFormatContext *s)
                             FF_MOV_FLAG_FRAG_CUSTOM)) &&
             !mov->max_fragment_duration && !mov->max_fragment_size)
             mov->max_fragment_duration = 5000000;
-        mov->flags |= FF_MOV_FLAG_EMPTY_MOOV | FF_MOV_FLAG_SEPARATE_MOOF |
-                      FF_MOV_FLAG_FRAGMENT;
+        mov->flags |= FF_MOV_FLAG_EMPTY_MOOV | FF_MOV_FLAG_SEPARATE_MOOF;
     }
 
     if (mov->reserved_moov_size){
