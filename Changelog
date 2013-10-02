@@ -25,6 +25,17 @@ version <next>
   more consistent with other muxers.
 - adelay filter
 - pullup filter ported from libmpcodecs
+- ffprobe -read_intervals option
+- Lossless and alpha support for WebP decoder
+- Error Resilient AAC syntax (ER AAC LC) decoding
+- Low Delay AAC (ER AAC LD) decoding
+- mux chapters in ASF files
+- SFTP protocol (via libssh)
+- libx264: add ability to encode in YUVJ422P and YUVJ444P
+- Fraps: use BT.709 colorspace by default for yuv, as reference fraps decoder does
+- make decoding alpha optional for prores, ffv1 and vp6 by setting
+  the skip_alpha flag.
+- ladspa wrapper filter
 
 
 version 2.0:

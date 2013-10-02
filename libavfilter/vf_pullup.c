@@ -41,7 +41,7 @@ static const AVOption pullup_options[] = {
     { "jl", "set left junk size",  OFFSET(junk_left),  AV_OPT_TYPE_INT, {.i64=1}, 0, INT_MAX, FLAGS },
     { "jr", "set right junk size", OFFSET(junk_right), AV_OPT_TYPE_INT, {.i64=1}, 0, INT_MAX, FLAGS },
     { "jt", "set top junk size",   OFFSET(junk_top),   AV_OPT_TYPE_INT, {.i64=4}, 1, INT_MAX, FLAGS },
-    { "jd", "set down junk size",  OFFSET(junk_down),  AV_OPT_TYPE_INT, {.i64=4}, 1, INT_MAX, FLAGS },
+    { "jb", "set bottom junk size", OFFSET(junk_bottom), AV_OPT_TYPE_INT, {.i64=4}, 1, INT_MAX, FLAGS },
     { "sb", "set strict breaks", OFFSET(strict_breaks), AV_OPT_TYPE_INT, {.i64=0},-1, 1, FLAGS },
     { "mp", "set metric plane",  OFFSET(metric_plane),  AV_OPT_TYPE_INT, {.i64=0}, 0, 2, FLAGS, "mp" },
     { "y", "luma",        0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, FLAGS, "mp" },
@@ -161,13 +161,19 @@ static int config_input(AVFilterLink *inlink)
     AVFilterContext *ctx = inlink->dst;
     PullupContext *s = ctx->priv;
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
-    const int mp = s->metric_plane;
+    int mp = s->metric_plane;
+
+    s->nb_planes = av_pix_fmt_count_planes(inlink->format);
+
+    if (mp + 1 > s->nb_planes) {
+        av_log(ctx, AV_LOG_ERROR, "input format does not have such plane\n");
+        return AVERROR(EINVAL);
+    }
 
     s->planeheight[1] = s->planeheight[2] = FF_CEIL_RSHIFT(inlink->h, desc->log2_chroma_h);
     s->planeheight[0] = s->planeheight[3] = inlink->h;
     s->planewidth[1]  = s->planewidth[2]  = FF_CEIL_RSHIFT(inlink->w, desc->log2_chroma_w);
     s->planewidth[0]  = s->planewidth[3]  = inlink->w;
-    s->nb_planes = av_pix_fmt_count_planes(inlink->format);
 
     s->metric_w      = (s->planewidth[mp]  - ((s->junk_left + s->junk_right)  << 3)) >> 3;
     s->metric_h      = (s->planeheight[mp] - ((s->junk_top  + s->junk_bottom) << 1)) >> 3;
@@ -712,17 +718,17 @@ static av_cold void uninit(AVFilterContext *ctx)
     int i;
 
     f = s->head;
-    do {
-        if (!f)
-            break;
-
+    while (f) {
         av_free(f->diffs);
         av_free(f->combs);
         av_free(f->vars);
+        if (f == s->last) {
+            av_freep(&s->last);
+            break;
+        }
         f = f->next;
         av_freep(&f->prev);
-    } while (f != s->last);
-    av_freep(&s->last);
+    };
 
     for (i = 0; i < FF_ARRAY_ELEMS(s->buffers); i++) {
         av_freep(&s->buffers[i].planes[0]);

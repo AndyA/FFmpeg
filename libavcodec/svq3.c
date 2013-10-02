@@ -317,7 +317,8 @@ static inline void svq3_mc_dir_part(SVQ3Context *s,
     src  = pic->f.data[0] + mx + my * h->linesize;
 
     if (emu) {
-        h->vdsp.emulated_edge_mc(h->edge_emu_buffer, src, h->linesize,
+        h->vdsp.emulated_edge_mc(h->edge_emu_buffer, h->linesize,
+                                 src, h->linesize,
                                  width + 1, height + 1,
                                  mx, my, s->h_edge_pos, s->v_edge_pos);
         src = h->edge_emu_buffer;
@@ -343,7 +344,8 @@ static inline void svq3_mc_dir_part(SVQ3Context *s,
             src  = pic->f.data[i] + mx + my * h->uvlinesize;
 
             if (emu) {
-                h->vdsp.emulated_edge_mc(h->edge_emu_buffer, src, h->uvlinesize,
+                h->vdsp.emulated_edge_mc(h->edge_emu_buffer, h->uvlinesize,
+                                         src, h->uvlinesize,
                                          width + 1, height + 1,
                                          mx, my, (s->h_edge_pos >> 1),
                                          s->v_edge_pos >> 1);
@@ -986,7 +988,8 @@ static av_cold int svq3_decode_init(AVCodecContext *avctx)
             int offset                = get_bits_count(&gb) + 7 >> 3;
             uint8_t *buf;
 
-            if (watermark_height <= 0 || (uint64_t)watermark_width*4 > UINT_MAX/watermark_height)
+            if (watermark_height <= 0 ||
+                (uint64_t)watermark_width * 4 > UINT_MAX / watermark_height)
                 return -1;
 
             buf = av_malloc(buf_len);

@@ -91,11 +91,13 @@ void compute_images_mse(PSNRContext *s,
         const uint8_t *ref_line = ref_data[c];
         const int ref_linesize = ref_linesizes[c];
         const int main_linesize = main_linesizes[c];
-        int m = 0;
+        uint64_t m = 0;
 
         for (i = 0; i < outh; i++) {
+            int m2 = 0;
             for (j = 0; j < outw; j++)
-                m += pow2(main_line[j] - ref_line[j]);
+                m2 += pow2(main_line[j] - ref_line[j]);
+            m += m2;
             ref_line += ref_linesize;
             main_line += main_linesize;
         }
@@ -303,27 +305,25 @@ static int config_input_ref(AVFilterLink *inlink)
 static int config_output(AVFilterLink *outlink)
 {
     AVFilterContext *ctx = outlink->src;
+    PSNRContext *s = ctx->priv;
     AVFilterLink *mainlink = ctx->inputs[0];
+    int ret;
 
     outlink->w = mainlink->w;
     outlink->h = mainlink->h;
     outlink->time_base = mainlink->time_base;
     outlink->sample_aspect_ratio = mainlink->sample_aspect_ratio;
     outlink->frame_rate = mainlink->frame_rate;
+    if ((ret = ff_dualinput_init(ctx, &s->dinput)) < 0)
+        return ret;
 
     return 0;
 }
 
-static int filter_frame_main(AVFilterLink *inlink, AVFrame *inpicref)
+static int filter_frame(AVFilterLink *inlink, AVFrame *inpicref)
 {
     PSNRContext *s = inlink->dst->priv;
-    return ff_dualinput_filter_frame_main(&s->dinput, inlink, inpicref);
-}
-
-static int filter_frame_ref(AVFilterLink *inlink, AVFrame *inpicref)
-{
-    PSNRContext *s = inlink->dst->priv;
-    return ff_dualinput_filter_frame_second(&s->dinput, inlink, inpicref);
+    return ff_dualinput_filter_frame(&s->dinput, inlink, inpicref);
 }
 
 static int request_frame(AVFilterLink *outlink)
@@ -353,11 +353,11 @@ static const AVFilterPad psnr_inputs[] = {
     {
         .name         = "main",
         .type         = AVMEDIA_TYPE_VIDEO,
-        .filter_frame = filter_frame_main,
+        .filter_frame = filter_frame,
     },{
         .name         = "reference",
         .type         = AVMEDIA_TYPE_VIDEO,
-        .filter_frame = filter_frame_ref,
+        .filter_frame = filter_frame,
         .config_props = config_input_ref,
     },
     { NULL }

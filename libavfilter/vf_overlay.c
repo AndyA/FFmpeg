@@ -30,7 +30,6 @@
 #include "libavutil/common.h"
 #include "libavutil/eval.h"
 #include "libavutil/avstring.h"
-#include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/mathematics.h"
@@ -310,6 +309,11 @@ static int config_input_overlay(AVFilterLink *inlink)
 static int config_output(AVFilterLink *outlink)
 {
     AVFilterContext *ctx = outlink->src;
+    OverlayContext *s = ctx->priv;
+    int ret;
+
+    if ((ret = ff_dualinput_init(ctx, &s->dinput)) < 0)
+        return ret;
 
     outlink->w = ctx->inputs[MAIN]->w;
     outlink->h = ctx->inputs[MAIN]->h;
@@ -545,16 +549,10 @@ static AVFrame *do_blend(AVFilterContext *ctx, AVFrame *mainpic,
     return mainpic;
 }
 
-static int filter_frame_main(AVFilterLink *inlink, AVFrame *inpicref)
+static int filter_frame(AVFilterLink *inlink, AVFrame *inpicref)
 {
     OverlayContext *s = inlink->dst->priv;
-    return ff_dualinput_filter_frame_main(&s->dinput, inlink, inpicref);
-}
-
-static int filter_frame_over(AVFilterLink *inlink, AVFrame *inpicref)
-{
-    OverlayContext *s = inlink->dst->priv;
-    return ff_dualinput_filter_frame_second(&s->dinput, inlink, inpicref);
+    return ff_dualinput_filter_frame(&s->dinput, inlink, inpicref);
 }
 
 static int request_frame(AVFilterLink *outlink)
@@ -602,14 +600,14 @@ static const AVFilterPad avfilter_vf_overlay_inputs[] = {
         .name         = "main",
         .type         = AVMEDIA_TYPE_VIDEO,
         .config_props = config_input_main,
-        .filter_frame = filter_frame_main,
+        .filter_frame = filter_frame,
         .needs_writable = 1,
     },
     {
         .name         = "overlay",
         .type         = AVMEDIA_TYPE_VIDEO,
         .config_props = config_input_overlay,
-        .filter_frame = filter_frame_over,
+        .filter_frame = filter_frame,
     },
     { NULL }
 };
