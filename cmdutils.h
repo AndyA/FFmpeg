@@ -82,6 +82,11 @@ void uninit_opts(void);
 void log_callback_help(void* ptr, int level, const char* fmt, va_list vl);
 
 /**
+ * Override the cpuflags.
+ */
+int opt_cpuflags(void *optctx, const char *opt, const char *arg);
+
+/**
  * Fallback for options that are not explicitly handled, these will be
  * parsed through AVOptions.
  */
@@ -95,8 +100,6 @@ int opt_loglevel(void *optctx, const char *opt, const char *arg);
 int opt_report(const char *opt);
 
 int opt_max_alloc(void *optctx, const char *opt, const char *arg);
-
-int opt_cpuflags(void *optctx, const char *opt, const char *arg);
 
 int opt_codec_debug(void *optctx, const char *opt, const char *arg);
 
@@ -412,6 +415,13 @@ void show_banner(int argc, char **argv, const OptionDef *options);
 int show_version(void *optctx, const char *opt, const char *arg);
 
 /**
+ * Print the build configuration of the program to stdout. The contents
+ * depend on the definition of FFMPEG_CONFIGURATION.
+ * This option processing function does not utilize the arguments.
+ */
+int show_buildconf(void *optctx, const char *opt, const char *arg);
+
+/**
  * Print the license of the program to stdout. The license depends on
  * the license of the libraries compiled into the program.
  * This option processing function does not utilize the arguments.
@@ -484,6 +494,12 @@ int show_layouts(void *optctx, const char *opt, const char *arg);
  * program.
  */
 int show_sample_fmts(void *optctx, const char *opt, const char *arg);
+
+/**
+ * Print a listing containing all the color names and values recognized
+ * by the program.
+ */
+int show_colors(void *optctx, const char *opt, const char *arg);
 
 /**
  * Return a positive value if a line read from standard input

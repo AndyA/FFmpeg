@@ -316,6 +316,7 @@ Optimization options (experts only):
   --disable-sse42          disable SSE4.2 optimizations
   --disable-avx            disable AVX optimizations
   --disable-fma4           disable FMA4 optimizations
+  --disable-avx2           disable AVX2 optimizations
   --disable-armv5te        disable armv5te optimizations
   --disable-armv6          disable armv6 optimizations
   --disable-armv6t2        disable armv6t2 optimizations
@@ -857,12 +858,17 @@ int x;
 EOF
 }
 
-check_cflags(){
-    log check_cflags "$@"
+test_cflags(){
+    log test_cflags "$@"
     set -- $($cflags_filter "$@")
-    check_cc "$@" <<EOF && append CFLAGS "$@"
+    check_cc "$@" <<EOF
 int x;
 EOF
+}
+
+check_cflags(){
+    log check_cflags "$@"
+    test_cflags "$@" && add_cflags "$@"
 }
 
 check_cxxflags(){
@@ -1346,6 +1352,7 @@ ARCH_EXT_LIST_X86='
     amd3dnow
     amd3dnowext
     avx
+    avx2
     fma4
     i686
     mmx
@@ -1571,6 +1578,7 @@ CONFIG_EXTRA="
     gcrypt
     golomb
     gplv3
+    h263dsp
     h264chroma
     h264dsp
     h264pred
@@ -1707,6 +1715,7 @@ sse4_deps="ssse3"
 sse42_deps="sse4"
 avx_deps="sse42"
 fma4_deps="avx"
+avx2_deps="avx"
 
 mmx_external_deps="yasm"
 mmx_inline_deps="inline_asm"
@@ -1805,8 +1814,8 @@ g2m_decoder_select="dsputil zlib"
 g729_decoder_select="dsputil"
 h261_decoder_select="error_resilience mpegvideo"
 h261_encoder_select="aandcttables mpegvideoenc"
-h263_decoder_select="error_resilience h263_parser mpegvideo"
-h263_encoder_select="aandcttables mpegvideoenc"
+h263_decoder_select="error_resilience h263_parser h263dsp mpegvideo"
+h263_encoder_select="aandcttables h263dsp mpegvideoenc"
 h263i_decoder_select="h263_decoder"
 h263p_encoder_select="h263_encoder"
 h264_decoder_select="golomb h264chroma h264dsp h264pred h264qpel videodsp"
@@ -1871,9 +1880,9 @@ qdm2_decoder_select="mdct rdft mpegaudiodsp"
 ra_144_encoder_select="audio_frame_queue lpc"
 ralf_decoder_select="golomb"
 rtjpeg_decoder_select="dsputil"
-rv10_decoder_select="error_resilience h263_decoder"
+rv10_decoder_select="error_resilience h263_decoder h263dsp"
 rv10_encoder_select="h263_encoder"
-rv20_decoder_select="error_resilience h263_decoder"
+rv20_decoder_select="error_resilience h263_decoder h263dsp"
 rv20_encoder_select="h263_encoder"
 rv30_decoder_select="error_resilience golomb h264chroma h264pred h264qpel mpegvideo videodsp"
 rv40_decoder_select="error_resilience golomb h264chroma h264pred h264qpel mpegvideo videodsp"
@@ -1995,6 +2004,7 @@ wmv3_vdpau_hwaccel_select="vc1_vdpau_hwaccel"
 
 # parsers
 h264_parser_select="golomb h264chroma h264dsp h264pred h264qpel videodsp"
+hevc_parser_select="hevc_decoder"
 mpeg4video_parser_select="error_resilience mpegvideo"
 mpegvideo_parser_select="error_resilience mpegvideo"
 vc1_parser_select="mpegvideo"
@@ -2073,6 +2083,7 @@ dxa_demuxer_select="riffdec"
 eac3_demuxer_select="ac3_parser"
 f4v_muxer_select="mov_muxer"
 flac_demuxer_select="flac_parser"
+hds_muxer_select="flv_muxer"
 hls_muxer_select="mpegts_muxer"
 ipod_muxer_select="mov_muxer"
 ismv_muxer_select="mov_muxer"
@@ -2127,6 +2138,7 @@ dshow_indev_extralibs="-lpsapi -lole32 -lstrmiids -luuid"
 dv1394_indev_deps="dv1394"
 dv1394_indev_select="dv_demuxer"
 fbdev_indev_deps="linux_fb_h"
+fbdev_outdev_deps="linux_fb_h"
 iec61883_indev_deps="libiec61883"
 jack_indev_deps="jack_jack_h sem_timedwait"
 lavfi_indev_deps="avfilter"
@@ -2226,7 +2238,6 @@ mp_filter_deps="gpl avcodec swscale inline_asm"
 mpdecimate_filter_deps="gpl avcodec"
 mptestsrc_filter_deps="gpl"
 negate_filter_deps="lut_filter"
-noise_filter_deps="gpl"
 perspective_filter_deps="gpl"
 resample_filter_deps="avresample"
 ocv_filter_deps="libopencv"
@@ -2615,7 +2626,20 @@ case "$toolchain" in
         target_exec_args="--error-exitcode=1 --malloc-fill=0x2a --track-origins=yes --leak-check=full --gen-suppressions=all --suppressions=$source_path/tests/fate-valgrind.supp"
     ;;
     msvc)
-        cc_default="c99wrap cl"
+        # Check whether the current MSVC version needs the C99 converter.
+        # From MSVC 2013 (compiler major version 18) onwards, it does actually
+        # support enough of C99 to build ffmpeg, but we still need to use
+        # c99wrap for passing command line parameters with a space (for
+        # avoiding msys path mangling/conversion issues). Default to the new
+        # behaviour if the regexp was unable to match anything, since this
+        # successfully parses the version number of existing supported
+        # versions that require the converter (MSVC 2010 and 2012).
+        cl_major_ver=$(cl 2>&1 | sed -n 's/.*Version \([[:digit:]]\{1,\}\)\..*/\1/p')
+        if [ -z "$cl_major_ver" ] || [ $cl_major_ver -ge 18 ]; then
+            cc_default="c99wrap -noconv cl"
+        else
+            cc_default="c99wrap cl"
+        fi
         ld_default="c99wrap link"
         nm_default="dumpbin -symbols"
         ar_default="lib"
@@ -2631,6 +2655,10 @@ case "$toolchain" in
     gcov)
         add_cflags  -fprofile-arcs -ftest-coverage
         add_ldflags -fprofile-arcs -ftest-coverage
+    ;;
+    hardened)
+        add_cflags -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 -fno-strict-overflow -fstack-protector-all
+        add_ldflags -Wl,-z,relro -Wl,-z,now
     ;;
     ?*)
         die "Unknown toolchain $toolchain"
@@ -2877,7 +2905,9 @@ probe_cc(){
     unset _depflags _DEPCMD _DEPFLAGS
     _flags_filter=echo
 
-    if $_cc -v 2>&1 | grep -q '^gcc.*LLVM'; then
+    if $_cc --version 2>&1 | grep -q '^GNU assembler'; then
+        true # no-op to avoid reading stdin in following checks
+    elif $_cc -v 2>&1 | grep -q '^gcc.*LLVM'; then
         _type=llvm_gcc
         gcc_extra_ver=$(expr "$($_cc --version | head -n1)" : '.*\((.*)\)')
         _ident="llvm-gcc $($_cc -dumpversion) $gcc_extra_ver"
@@ -4415,13 +4445,9 @@ enabled debug && add_cflags -g"$debuglevel" && add_asflags -g"$debuglevel"
 # add some useful compiler flags if supported
 check_cflags -Wdeclaration-after-statement
 check_cflags -Wall
-check_cflags -Wno-parentheses
-check_cflags -Wno-switch
-check_cflags -Wno-format-zero-length
 check_cflags -Wdisabled-optimization
 check_cflags -Wpointer-arith
 check_cflags -Wredundant-decls
-check_cflags -Wno-pointer-sign
 check_cflags -Wwrite-strings
 check_cflags -Wtype-limits
 check_cflags -Wundef
@@ -4429,6 +4455,16 @@ check_cflags -Wmissing-prototypes
 check_cflags -Wno-pointer-to-int-cast
 check_cflags -Wstrict-prototypes
 enabled extra_warnings && check_cflags -Winline
+
+check_disable_warning(){
+    warning_flag=-W${1#-Wno-}
+    test_cflags $warning_flag && add_cflags $1
+}
+
+check_disable_warning -Wno-parentheses
+check_disable_warning -Wno-switch
+check_disable_warning -Wno-format-zero-length
+check_disable_warning -Wno-pointer-sign
 
 # add some linker flags
 check_ldflags -Wl,--warn-common
@@ -4528,6 +4564,7 @@ elif enabled gcc; then
     check_cflags -Werror=missing-prototypes
     check_cflags -Werror=return-type
     check_cflags -Werror=vla
+    enabled extra_warnings || check_disable_warning -Wno-maybe-uninitialized
 elif enabled llvm_gcc; then
     check_cflags -mllvm -stack-alignment=16
 elif enabled clang; then
@@ -4580,6 +4617,8 @@ esac
 enable frame_thread_encoder
 enabled_any $THREADS_LIST      && enable threads
 enabled_any $ATOMICS_LIST      && enable atomics_native
+
+enabled threads && ! enabled pthreads && ! enabled atomics_native && die "non pthread threading without atomics not supported, try adding --enable-pthreads or --cpu=i486 or higher if you are on x86"
 
 enabled asm || { arch=c; disable $ARCH_LIST $ARCH_EXT_LIST; }
 
@@ -4724,7 +4763,7 @@ echo "License: $license"
 
 echo "Creating config.mak, config.h, and doc/config.texi..."
 
-test -e Makefile || $ln_s "$source_path/Makefile" .
+test -e Makefile || echo "include $source_path/Makefile" > Makefile
 
 enabled stripping || strip="echo skipping strip"
 
@@ -4961,7 +5000,7 @@ Description: $comment
 Version: $version
 Requires: $requires
 Conflicts:
-Libs: -L\${libdir} -l${shortname} $(enabled shared || echo $libs)
+Libs: -L\${libdir} -Wl,-rpath,\${libdir} -l${shortname} $(enabled shared || echo $libs)
 Cflags: -I\${includedir}
 EOF
 }

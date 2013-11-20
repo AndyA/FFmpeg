@@ -202,6 +202,19 @@ static void put_ebml_uint(AVIOContext *pb, unsigned int elementid, uint64_t val)
         avio_w8(pb, (uint8_t)(val >> i*8));
 }
 
+static void put_ebml_sint(AVIOContext *pb, unsigned int elementid, int64_t val)
+{
+    int i, bytes = 1;
+    uint64_t tmp = 2*(val < 0 ? val^-1 : val);
+
+    while (tmp>>=8) bytes++;
+
+    put_ebml_id(pb, elementid);
+    put_ebml_num(pb, bytes, 0);
+    for (i = bytes - 1; i >= 0; i--)
+        avio_w8(pb, (uint8_t)(val >> i*8));
+}
+
 static void put_ebml_float(AVIOContext *pb, unsigned int elementid, double val)
 {
     put_ebml_id(pb, elementid);
@@ -592,6 +605,8 @@ static int mkv_write_tracks(AVFormatContext *s)
         int bit_depth = av_get_bits_per_sample(codec->codec_id);
         int sample_rate = codec->sample_rate;
         int output_sample_rate = 0;
+        int display_width_div = 1;
+        int display_height_div = 1;
         AVDictionaryEntry *tag;
 
         if (codec->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
@@ -723,6 +738,21 @@ static int mkv_write_tracks(AVFormatContext *s)
                         return AVERROR(EINVAL);
                     } else
                         put_ebml_uint(pb, MATROSKA_ID_VIDEOSTEREOMODE, st_mode);
+
+                    switch (st_mode) {
+                    case 1:
+                    case 8:
+                    case 9:
+                    case 11:
+                        display_width_div = 2;
+                        break;
+                    case 2:
+                    case 3:
+                    case 6:
+                    case 7:
+                        display_height_div = 2;
+                        break;
+                    }
                 }
 
                 if ((tag = av_dict_get(st->metadata, "alpha_mode", NULL, 0)) ||
@@ -737,8 +767,11 @@ static int mkv_write_tracks(AVFormatContext *s)
                         av_log(s, AV_LOG_ERROR, "Overflow in display width\n");
                         return AVERROR(EINVAL);
                     }
-                    put_ebml_uint(pb, MATROSKA_ID_VIDEODISPLAYWIDTH , d_width);
-                    put_ebml_uint(pb, MATROSKA_ID_VIDEODISPLAYHEIGHT, codec->height);
+                    put_ebml_uint(pb, MATROSKA_ID_VIDEODISPLAYWIDTH , d_width / display_width_div);
+                    put_ebml_uint(pb, MATROSKA_ID_VIDEODISPLAYHEIGHT, codec->height / display_height_div);
+                } else if (display_width_div != 1 || display_height_div != 1) {
+                    put_ebml_uint(pb, MATROSKA_ID_VIDEODISPLAYWIDTH , codec->width / display_width_div);
+                    put_ebml_uint(pb, MATROSKA_ID_VIDEODISPLAYHEIGHT, codec->height / display_height_div);
                 }
 
                 if (codec->codec_id == AV_CODEC_ID_RAWVIDEO) {
@@ -1304,7 +1337,8 @@ static void mkv_write_block(AVFormatContext *s, AVIOContext *pb,
     uint8_t *data = NULL, *side_data = NULL;
     int offset = 0, size = pkt->size, side_data_size = 0;
     int64_t ts = mkv->tracks[pkt->stream_index].write_dts ? pkt->dts : pkt->pts;
-    uint64_t additional_id = 0, discard_padding = 0;
+    uint64_t additional_id = 0;
+    int64_t discard_padding = 0;
     ebml_master block_group, block_additions, block_more;
 
     av_log(s, AV_LOG_DEBUG, "Writing block at offset %" PRIu64 ", size %d, "
@@ -1363,7 +1397,7 @@ static void mkv_write_block(AVFormatContext *s, AVIOContext *pb,
         av_free(data);
 
     if (discard_padding) {
-        put_ebml_uint(pb, MATROSKA_ID_DISCARDPADDING, discard_padding);
+        put_ebml_sint(pb, MATROSKA_ID_DISCARDPADDING, discard_padding);
     }
 
     if (side_data_size && additional_id == 1) {
