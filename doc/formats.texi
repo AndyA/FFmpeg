@@ -57,6 +57,10 @@ Enable RTP MP4A-LATM payload.
 Reduce the latency introduced by optional buffering
 @end table
 
+@item seek2any @var{integer} (@emph{input})
+Allow seeking to non-keyframes on demuxer level when supported if set to 1.
+Default is 0.
+
 @item analyzeduration @var{integer} (@emph{input})
 Specify how many microseconds are analyzed to probe the input. A
 higher value will allow to detect more accurate information, but will
@@ -133,10 +137,29 @@ been without shifting.
 Also note that this affects only leading negative timestamps, and not
 non-monotonic negative timestamps.
 
+@item skip_initial_bytes @var{integer} (@emph{input})
+Set number of bytes to skip before reading header and frames if set to 1.
+Default is 0.
+
+@item correct_ts_overflow @var{integer} (@emph{input})
+Correct single timestamp overflows if set to 1. Default is 1.
+
 @item flush_packets @var{integer} (@emph{output})
 Flush the underlying I/O stream after each packet. Default 1 enables it, and
 has the effect of reducing the latency; 0 disables it and may slightly
 increase performance in some cases.
+
+@item output_ts_offset @var{offset} (@emph{output})
+Set the output time offset.
+
+@var{offset} must be a time duration specification,
+see @ref{time duration syntax,,the Time duration section in the ffmpeg-utils(1) manual,ffmpeg-utils}.
+
+The offset is added by the muxer to the output timestamps.
+
+Specifying a positive offset means that the corresponding streams are
+delayed bt the time duration specified in @var{offset}. Default value
+is @code{0} (meaning that no offset is applied).
 @end table
 
 @c man end FORMAT OPTIONS
@@ -172,6 +195,10 @@ The exact semantics of stream specifiers is defined by the
 @code{avformat_match_stream_specifier()} function declared in the
 @file{libavformat/avformat.h} header.
 
+@ifclear config-writeonly
 @include demuxers.texi
+@end ifclear
+@ifclear config-readonly
 @include muxers.texi
+@end ifclear
 @include metadata.texi

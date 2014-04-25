@@ -128,7 +128,8 @@ static int ftp_status(FTPContext *s, char **line, const int response_codes[])
 
     while (!code_found || dash) {
         if ((err = ftp_get_line(s, buf, sizeof(buf))) < 0) {
-            av_bprint_finalize(&line_buffer, NULL);
+            if (line)
+                av_bprint_finalize(&line_buffer, NULL);
             return err;
         }
 
@@ -269,6 +270,8 @@ static int ftp_passive_mode(FTPContext *s)
   fail:
     av_free(res);
     s->server_data_port = -1;
+    av_log(s, AV_LOG_ERROR, "Set passive mode failed\n"
+                            "Your FTP server may use IPv6 which is not supported yet.\n");
     return AVERROR(EIO);
 }
 
@@ -420,7 +423,7 @@ static int ftp_connect_control_connection(URLContext *h)
         }
 
         if ((err = ftp_type(s)) < 0) {
-            av_dlog(h, "Set content type failed\n");
+            av_log(h, AV_LOG_ERROR, "Set content type failed\n");
             return err;
         }
     }
@@ -436,10 +439,8 @@ static int ftp_connect_data_connection(URLContext *h)
 
     if (!s->conn_data) {
         /* Enter passive mode */
-        if ((err = ftp_passive_mode(s)) < 0) {
-            av_dlog(h, "Set passive mode failed\n");
+        if ((err = ftp_passive_mode(s)) < 0)
             return err;
-        }
         /* Open data connection */
         ff_url_join(buf, sizeof(buf), "tcp", NULL, s->hostname, s->server_data_port, NULL);
         if (s->rw_timeout != -1) {
@@ -485,14 +486,13 @@ static int ftp_abort(URLContext *h)
         }
     } else {
         ftp_close_data_connection(s);
-    }
-
-    if (ftp_status(s, NULL, abor_codes) < 225) {
-        /* wu-ftpd also closes control connection after data connection closing */
-        ffurl_closep(&s->conn_control);
-        if ((err = ftp_connect_control_connection(h)) < 0) {
-            av_log(h, AV_LOG_ERROR, "Reconnect failed.\n");
-            return err;
+        if (ftp_status(s, NULL, abor_codes) < 225) {
+            /* wu-ftpd also closes control connection after data connection closing */
+            ffurl_closep(&s->conn_control);
+            if ((err = ftp_connect_control_connection(h)) < 0) {
+                av_log(h, AV_LOG_ERROR, "Reconnect failed.\n");
+                return err;
+            }
         }
     }
 
@@ -572,7 +572,7 @@ static int64_t ftp_seek(URLContext *h, int64_t pos, int whence)
         return AVERROR(EINVAL);
     }
 
-    if  (h->is_streamed)
+    if (h->is_streamed)
         return AVERROR(EIO);
 
     /* XXX: Simulate behaviour of lseek in file protocol, which could be treated as a reference */

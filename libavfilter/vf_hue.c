@@ -4,19 +4,19 @@
  *
  * This file is part of FFmpeg.
  *
- * FFmpeg is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * FFmpeg is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * FFmpeg is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License along
- * with FFmpeg; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with FFmpeg; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
 /**
@@ -73,6 +73,7 @@ typedef struct {
     AVExpr   *brightness_pexpr;
     int      hsub;
     int      vsub;
+    int is_first;
     int32_t hue_sin;
     int32_t hue_cos;
     double   var_values[VAR_NB];
@@ -143,8 +144,8 @@ static inline void create_chrominance_lut(HueContext *h, const int32_t c,
             new_v = ((s * u) + (c * v) + (1 << 15) + (128 << 16)) >> 16;
 
             /* Prevent a potential overflow */
-            h->lut_u[i][j] = av_clip_uint8_c(new_u);
-            h->lut_v[i][j] = av_clip_uint8_c(new_v);
+            h->lut_u[i][j] = av_clip_uint8(new_u);
+            h->lut_v[i][j] = av_clip_uint8(new_v);
         }
     }
 }
@@ -207,6 +208,7 @@ static av_cold int init(AVFilterContext *ctx)
            "H_expr:%s h_deg_expr:%s s_expr:%s b_expr:%s\n",
            hue->hue_expr, hue->hue_deg_expr, hue->saturation_expr, hue->brightness_expr);
     compute_sin_and_cos(hue);
+    hue->is_first = 1;
 
     return 0;
 }
@@ -351,15 +353,15 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *inpic)
     }
 
     av_log(inlink->dst, AV_LOG_DEBUG,
-           "H:%0.1f*PI h:%0.1f s:%0.f b:%0.f t:%0.1f n:%d\n",
+           "H:%0.1f*PI h:%0.1f s:%0.1f b:%0.f t:%0.1f n:%d\n",
            hue->hue/M_PI, hue->hue_deg, hue->saturation, hue->brightness,
            hue->var_values[VAR_T], (int)hue->var_values[VAR_N]);
 
     compute_sin_and_cos(hue);
-    if (old_hue_sin != hue->hue_sin || old_hue_cos != hue->hue_cos)
+    if (hue->is_first || (old_hue_sin != hue->hue_sin || old_hue_cos != hue->hue_cos))
         create_chrominance_lut(hue, hue->hue_cos, hue->hue_sin);
 
-    if (old_brightness != hue->brightness && hue->brightness)
+    if (hue->is_first || (old_brightness != hue->brightness && hue->brightness))
         create_luma_lut(hue);
 
     if (!direct) {
@@ -383,6 +385,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *inpic)
 
     if (!direct)
         av_frame_free(&inpic);
+
+    hue->is_first = 0;
     return ff_filter_frame(outlink, outpic);
 }
 
@@ -434,15 +438,13 @@ static const AVFilterPad hue_outputs[] = {
     { NULL }
 };
 
-AVFilter avfilter_vf_hue = {
-    .name        = "hue",
-    .description = NULL_IF_CONFIG_SMALL("Adjust the hue and saturation of the input video."),
-
-    .priv_size = sizeof(HueContext),
-
-    .init          = init,
-    .uninit        = uninit,
-    .query_formats = query_formats,
+AVFilter ff_vf_hue = {
+    .name            = "hue",
+    .description     = NULL_IF_CONFIG_SMALL("Adjust the hue and saturation of the input video."),
+    .priv_size       = sizeof(HueContext),
+    .init            = init,
+    .uninit          = uninit,
+    .query_formats   = query_formats,
     .process_command = process_command,
     .inputs          = hue_inputs,
     .outputs         = hue_outputs,

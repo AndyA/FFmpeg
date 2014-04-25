@@ -135,6 +135,7 @@ static int parse_strk(AVFormatContext *s,
         av_log(s, AV_LOG_ERROR, "current_track too large\n");
         return AVERROR_INVALIDDATA;
     }
+
     if (track + 1 > fourxm->track_count) {
         if (av_reallocp_array(&fourxm->tracks, track + 1, sizeof(AudioTrack)))
             return AVERROR(ENOMEM);
@@ -150,7 +151,7 @@ static int parse_strk(AVFormatContext *s,
 
     if (fourxm->tracks[track].channels    <= 0 ||
         fourxm->tracks[track].sample_rate <= 0 ||
-        fourxm->tracks[track].bits        < 0) {
+        fourxm->tracks[track].bits        <= 0) {
         av_log(s, AV_LOG_ERROR, "audio header invalid\n");
         return AVERROR_INVALIDDATA;
     }
@@ -318,8 +319,10 @@ static int fourxm_read_packet(AVFormatContext *s,
 
             if (ret < 0) {
                 av_free_packet(pkt);
-            } else
+            } else {
                 packet_read = 1;
+                av_shrink_packet(pkt, ret + 8);
+            }
             break;
 
         case snd__TAG:

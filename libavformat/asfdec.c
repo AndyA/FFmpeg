@@ -465,6 +465,8 @@ static int asf_read_stream_properties(AVFormatContext *s, int64_t size)
             st->codec->extradata_size = ffio_limit(pb, sizeX - 40);
             st->codec->extradata      = av_mallocz(st->codec->extradata_size +
                                                    FF_INPUT_BUFFER_PADDING_SIZE);
+            if (!st->codec->extradata)
+                return AVERROR(ENOMEM);
             avio_read(pb, st->codec->extradata, st->codec->extradata_size);
         }
 
@@ -677,6 +679,7 @@ static int asf_read_metadata(AVFormatContext *s, int64_t size)
 static int asf_read_marker(AVFormatContext *s, int64_t size)
 {
     AVIOContext *pb = s->pb;
+    ASFContext *asf = s->priv_data;
     int i, count, name_len, ret;
     char name[1024];
 
@@ -694,6 +697,7 @@ static int asf_read_marker(AVFormatContext *s, int64_t size)
 
         avio_rl64(pb);             // offset, 8 bytes
         pres_time = avio_rl64(pb); // presentation time
+        pres_time -= asf->hdr.preroll * 10000;
         avio_rl16(pb);             // entry length
         avio_rl32(pb);             // send time
         avio_rl32(pb);             // flags
@@ -750,7 +754,9 @@ static int asf_read_header(AVFormatContext *s)
             if (ret < 0)
                 return ret;
         } else if (!ff_guidcmp(&g, &ff_asf_stream_header)) {
-            asf_read_stream_properties(s, gsize);
+            int ret = asf_read_stream_properties(s, gsize);
+            if (ret < 0)
+                return ret;
         } else if (!ff_guidcmp(&g, &ff_asf_comment_header)) {
             asf_read_content_desc(s, gsize);
         } else if (!ff_guidcmp(&g, &ff_asf_language_guid)) {
@@ -1116,8 +1122,7 @@ static int asf_parse_packet(AVFormatContext *s, AVIOContext *pb, AVPacket *pkt)
         if (url_feof(pb))
             return AVERROR_EOF;
 
-        if (asf->packet_size_left < FRAME_HEADER_SIZE ||
-            asf->packet_segments < 1) {
+        if (asf->packet_size_left < FRAME_HEADER_SIZE) {
             int ret = asf->packet_size_left + asf->packet_padsize;
 
             assert(ret >= 0);
@@ -1132,7 +1137,7 @@ static int asf_parse_packet(AVFormatContext *s, AVIOContext *pb, AVPacket *pkt)
         }
         if (asf->packet_time_start == 0) {
             if (asf_read_frame_header(s, pb) < 0) {
-                asf->packet_segments = 0;
+                asf->packet_time_start = asf->packet_segments = 0;
                 continue;
             }
             if (asf->stream_index < 0 ||
@@ -1186,6 +1191,7 @@ static int asf_parse_packet(AVFormatContext *s, AVIOContext *pb, AVPacket *pkt)
             asf_st->pkt.dts          = asf->packet_frag_timestamp - asf->hdr.preroll;
             asf_st->pkt.stream_index = asf->stream_index;
             asf_st->pkt.pos          = asf_st->packet_pos = asf->packet_pos;
+            asf_st->pkt_clean        = 0;
 
             if (asf_st->pkt.data && asf_st->palette_changed) {
                 uint8_t *pal;
@@ -1224,6 +1230,11 @@ static int asf_parse_packet(AVFormatContext *s, AVIOContext *pb, AVPacket *pkt)
                    asf->packet_frag_offset, asf->packet_frag_size,
                    asf_st->pkt.size);
             continue;
+        }
+
+        if (asf->packet_frag_offset != asf_st->frag_offset && !asf_st->pkt_clean) {
+            memset(asf_st->pkt.data + asf_st->frag_offset, 0, asf_st->pkt.size - asf_st->frag_offset);
+            asf_st->pkt_clean = 1;
         }
 
         ret = avio_read(pb, asf_st->pkt.data + asf->packet_frag_offset,
@@ -1343,7 +1354,6 @@ static void asf_reset_header(AVFormatContext *s)
     int i;
 
     asf->packet_size_left      = 0;
-    asf->packet_segments       = 0;
     asf->packet_flags          = 0;
     asf->packet_property       = 0;
     asf->packet_timestamp      = 0;

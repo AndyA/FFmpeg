@@ -586,8 +586,11 @@ static int msmpeg4_decode_dc(MpegEncContext * s, int n, int *dir_ptr)
         } else {
             level = get_vlc2(&s->gb, v2_dc_chroma_vlc.table, DC_VLC_BITS, 3);
         }
-        if (level < 0)
+        if (level < 0) {
+            av_log(s->avctx, AV_LOG_ERROR, "illegal dc vlc\n");
+            *dir_ptr = 0;
             return -1;
+        }
         level-=256;
     }else{  //FIXME optimize use unified tables & index
         if (n < 4) {
@@ -597,6 +600,7 @@ static int msmpeg4_decode_dc(MpegEncContext * s, int n, int *dir_ptr)
         }
         if (level < 0){
             av_log(s->avctx, AV_LOG_ERROR, "illegal dc vlc\n");
+            *dir_ptr = 0;
             return -1;
         }
 
@@ -909,6 +913,7 @@ int ff_msmpeg4_decode_motion(MpegEncContext * s,
 
 AVCodec ff_msmpeg4v1_decoder = {
     .name           = "msmpeg4v1",
+    .long_name      = NULL_IF_CONFIG_SMALL("MPEG-4 part 2 Microsoft variant version 1"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_MSMPEG4V1,
     .priv_data_size = sizeof(MpegEncContext),
@@ -917,12 +922,12 @@ AVCodec ff_msmpeg4v1_decoder = {
     .decode         = ff_h263_decode_frame,
     .capabilities   = CODEC_CAP_DRAW_HORIZ_BAND | CODEC_CAP_DR1,
     .max_lowres     = 3,
-    .long_name      = NULL_IF_CONFIG_SMALL("MPEG-4 part 2 Microsoft variant version 1"),
     .pix_fmts       = ff_pixfmt_list_420,
 };
 
 AVCodec ff_msmpeg4v2_decoder = {
     .name           = "msmpeg4v2",
+    .long_name      = NULL_IF_CONFIG_SMALL("MPEG-4 part 2 Microsoft variant version 2"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_MSMPEG4V2,
     .priv_data_size = sizeof(MpegEncContext),
@@ -931,12 +936,12 @@ AVCodec ff_msmpeg4v2_decoder = {
     .decode         = ff_h263_decode_frame,
     .capabilities   = CODEC_CAP_DRAW_HORIZ_BAND | CODEC_CAP_DR1,
     .max_lowres     = 3,
-    .long_name      = NULL_IF_CONFIG_SMALL("MPEG-4 part 2 Microsoft variant version 2"),
     .pix_fmts       = ff_pixfmt_list_420,
 };
 
 AVCodec ff_msmpeg4v3_decoder = {
     .name           = "msmpeg4",
+    .long_name      = NULL_IF_CONFIG_SMALL("MPEG-4 part 2 Microsoft variant version 3"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_MSMPEG4V3,
     .priv_data_size = sizeof(MpegEncContext),
@@ -945,12 +950,12 @@ AVCodec ff_msmpeg4v3_decoder = {
     .decode         = ff_h263_decode_frame,
     .capabilities   = CODEC_CAP_DRAW_HORIZ_BAND | CODEC_CAP_DR1,
     .max_lowres     = 3,
-    .long_name      = NULL_IF_CONFIG_SMALL("MPEG-4 part 2 Microsoft variant version 3"),
     .pix_fmts       = ff_pixfmt_list_420,
 };
 
 AVCodec ff_wmv1_decoder = {
     .name           = "wmv1",
+    .long_name      = NULL_IF_CONFIG_SMALL("Windows Media Video 7"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_WMV1,
     .priv_data_size = sizeof(MpegEncContext),
@@ -959,6 +964,5 @@ AVCodec ff_wmv1_decoder = {
     .decode         = ff_h263_decode_frame,
     .capabilities   = CODEC_CAP_DRAW_HORIZ_BAND | CODEC_CAP_DR1,
     .max_lowres     = 3,
-    .long_name      = NULL_IF_CONFIG_SMALL("Windows Media Video 7"),
     .pix_fmts       = ff_pixfmt_list_420,
 };

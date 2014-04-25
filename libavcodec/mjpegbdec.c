@@ -119,7 +119,7 @@ read_header:
                       8 * FFMIN(field_size, buf_end - buf_ptr - sos_offs));
         s->mjpb_skiptosod = (sod_offs - sos_offs - show_bits(&s->gb, 16));
         s->start_code = SOS;
-        if (ff_mjpeg_decode_sos(s, NULL, NULL) < 0 &&
+        if (ff_mjpeg_decode_sos(s, NULL, 0, NULL) < 0 &&
             (avctx->err_recognition & AV_EF_EXPLODE))
           return AVERROR_INVALIDDATA;
     }
@@ -155,6 +155,7 @@ read_header:
 
 AVCodec ff_mjpegb_decoder = {
     .name           = "mjpegb",
+    .long_name      = NULL_IF_CONFIG_SMALL("Apple MJPEG-B"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_MJPEGB,
     .priv_data_size = sizeof(MJpegDecodeContext),
@@ -163,5 +164,4 @@ AVCodec ff_mjpegb_decoder = {
     .decode         = mjpegb_decode_frame,
     .capabilities   = CODEC_CAP_DR1,
     .max_lowres     = 3,
-    .long_name      = NULL_IF_CONFIG_SMALL("Apple MJPEG-B"),
 };

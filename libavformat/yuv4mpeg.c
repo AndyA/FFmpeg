@@ -22,7 +22,6 @@
 #include "libavutil/pixdesc.h"
 #include "avformat.h"
 #include "internal.h"
-#include "libavutil/pixdesc.h"
 
 #define Y4M_MAGIC "YUV4MPEG2"
 #define Y4M_FRAME_MAGIC "FRAME"
@@ -518,6 +517,7 @@ static int yuv4_read_header(AVFormatContext *s)
     st->codec->height = height;
     av_reduce(&raten, &rated, raten, rated, (1UL << 31) - 1);
     avpriv_set_pts_info(st, 64, rated, raten);
+    st->avg_frame_rate                = av_inv_q(st->time_base);
     st->codec->pix_fmt                = pix_fmt;
     st->codec->codec_type             = AVMEDIA_TYPE_VIDEO;
     st->codec->codec_id               = AV_CODEC_ID_RAWVIDEO;

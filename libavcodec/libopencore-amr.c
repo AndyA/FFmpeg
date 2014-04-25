@@ -128,6 +128,7 @@ static int amr_nb_decode_frame(AVCodecContext *avctx, void *data,
 
 AVCodec ff_libopencore_amrnb_decoder = {
     .name           = "libopencore_amrnb",
+    .long_name      = NULL_IF_CONFIG_SMALL("OpenCORE AMR-NB (Adaptive Multi-Rate Narrow-Band)"),
     .type           = AVMEDIA_TYPE_AUDIO,
     .id             = AV_CODEC_ID_AMR_NB,
     .priv_data_size = sizeof(AMRContext),
@@ -135,7 +136,6 @@ AVCodec ff_libopencore_amrnb_decoder = {
     .close          = amr_nb_decode_close,
     .decode         = amr_nb_decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("OpenCORE AMR-NB (Adaptive Multi-Rate Narrow-Band)"),
 };
 #endif /* CONFIG_LIBOPENCORE_AMRNB_DECODER */
 
@@ -205,7 +205,6 @@ static av_cold int amr_nb_encode_init(AVCodecContext *avctx)
     s->enc_state = Encoder_Interface_init(s->enc_dtx);
     if (!s->enc_state) {
         av_log(avctx, AV_LOG_ERROR, "Encoder_Interface_init error\n");
-        av_freep(&avctx->coded_frame);
         return -1;
     }
 
@@ -281,6 +280,7 @@ static int amr_nb_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
 
 AVCodec ff_libopencore_amrnb_encoder = {
     .name           = "libopencore_amrnb",
+    .long_name      = NULL_IF_CONFIG_SMALL("OpenCORE AMR-NB (Adaptive Multi-Rate Narrow-Band)"),
     .type           = AVMEDIA_TYPE_AUDIO,
     .id             = AV_CODEC_ID_AMR_NB,
     .priv_data_size = sizeof(AMRContext),
@@ -290,7 +290,6 @@ AVCodec ff_libopencore_amrnb_encoder = {
     .capabilities   = CODEC_CAP_DELAY | CODEC_CAP_SMALL_LAST_FRAME,
     .sample_fmts    = (const enum AVSampleFormat[]){ AV_SAMPLE_FMT_S16,
                                                      AV_SAMPLE_FMT_NONE },
-    .long_name      = NULL_IF_CONFIG_SMALL("OpenCORE AMR-NB (Adaptive Multi-Rate Narrow-Band)"),
     .priv_class     = &amrnb_class,
 };
 #endif /* CONFIG_LIBOPENCORE_AMRNB_ENCODER */
@@ -366,6 +365,7 @@ static int amr_wb_decode_close(AVCodecContext *avctx)
 
 AVCodec ff_libopencore_amrwb_decoder = {
     .name           = "libopencore_amrwb",
+    .long_name      = NULL_IF_CONFIG_SMALL("OpenCORE AMR-WB (Adaptive Multi-Rate Wide-Band)"),
     .type           = AVMEDIA_TYPE_AUDIO,
     .id             = AV_CODEC_ID_AMR_WB,
     .priv_data_size = sizeof(AMRWBContext),
@@ -373,7 +373,6 @@ AVCodec ff_libopencore_amrwb_decoder = {
     .close          = amr_wb_decode_close,
     .decode         = amr_wb_decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("OpenCORE AMR-WB (Adaptive Multi-Rate Wide-Band)"),
 };
 
 #endif /* CONFIG_LIBOPENCORE_AMRWB_DECODER */

@@ -325,8 +325,8 @@ static void list_standards(AVFormatContext *ctx)
                 return;
             }
         }
-        av_log(ctx, AV_LOG_INFO, "%2d, %16llx, %s\n",
-               standard.index, standard.id, standard.name);
+        av_log(ctx, AV_LOG_INFO, "%2d, %16"PRIx64", %s\n",
+               standard.index, (uint64_t)standard.id, standard.name);
     }
 }
 
@@ -447,16 +447,20 @@ static int init_convert_timestamp(AVFormatContext *ctx, int64_t ts)
         return 0;
     }
 #if HAVE_CLOCK_GETTIME && defined(CLOCK_MONOTONIC)
-    now = av_gettime_monotonic();
-    if (s->ts_mode == V4L_TS_MONO2ABS ||
-        (ts <= now + 1 * AV_TIME_BASE && ts >= now - 10 * AV_TIME_BASE)) {
-        AVRational tb = {AV_TIME_BASE, 1};
-        int64_t period = av_rescale_q(1, tb, ctx->streams[0]->avg_frame_rate);
-        av_log(ctx, AV_LOG_INFO, "Detected monotonic timestamps, converting\n");
-        /* microseconds instead of seconds, MHz instead of Hz */
-        s->timefilter = ff_timefilter_new(1, period, 1.0E-6);
-        s->ts_mode = V4L_TS_CONVERT_READY;
-        return 0;
+    if (ctx->streams[0]->avg_frame_rate.num) {
+        now = av_gettime_monotonic();
+        if (s->ts_mode == V4L_TS_MONO2ABS ||
+            (ts <= now + 1 * AV_TIME_BASE && ts >= now - 10 * AV_TIME_BASE)) {
+            AVRational tb = {AV_TIME_BASE, 1};
+            int64_t period = av_rescale_q(1, tb, ctx->streams[0]->avg_frame_rate);
+            av_log(ctx, AV_LOG_INFO, "Detected monotonic timestamps, converting\n");
+            /* microseconds instead of seconds, MHz instead of Hz */
+            s->timefilter = ff_timefilter_new(1, period, 1.0E-6);
+            if (!s->timefilter)
+                return AVERROR(ENOMEM);
+            s->ts_mode = V4L_TS_CONVERT_READY;
+            return 0;
+        }
     }
 #endif
     av_log(ctx, AV_LOG_ERROR, "Unknown timestamps\n");
@@ -687,12 +691,16 @@ static int v4l2_set_parameters(AVFormatContext *s1)
             standard.index = i;
             if (v4l2_ioctl(s->fd, VIDIOC_ENUMSTD, &standard) < 0) {
                 ret = AVERROR(errno);
+                if (ret == AVERROR(EINVAL)) {
+                    tpf = &streamparm.parm.capture.timeperframe;
+                    break;
+                }
                 av_log(s1, AV_LOG_ERROR, "ioctl(VIDIOC_ENUMSTD): %s\n", av_err2str(ret));
                 return ret;
             }
             if (standard.id == s->std_id) {
                 av_log(s1, AV_LOG_DEBUG,
-                       "Current standard: %s, id: %"PRIu64", frameperiod: %d/%d\n",
+                       "Current standard: %s, id: %"PRIx64", frameperiod: %d/%d\n",
                        standard.name, (uint64_t)standard.id, tpf->numerator, tpf->denominator);
                 break;
             }
@@ -736,9 +744,12 @@ static int v4l2_set_parameters(AVFormatContext *s1)
                    "The driver does not allow to change time per frame\n");
         }
     }
-    s1->streams[0]->avg_frame_rate.num = tpf->denominator;
-    s1->streams[0]->avg_frame_rate.den = tpf->numerator;
-    s1->streams[0]->r_frame_rate = s1->streams[0]->avg_frame_rate;
+    if (tpf->denominator > 0 && tpf->numerator > 0) {
+        s1->streams[0]->avg_frame_rate.num = tpf->denominator;
+        s1->streams[0]->avg_frame_rate.den = tpf->numerator;
+        s1->streams[0]->r_frame_rate = s1->streams[0]->avg_frame_rate;
+    } else
+        av_log(s1, AV_LOG_WARNING, "Time per frame unknown\n");
 
     return 0;
 }
@@ -845,8 +856,8 @@ static int v4l2_read_header(AVFormatContext *s1)
         return res;
     }
     s->std_id = input.std;
-    av_log(s1, AV_LOG_DEBUG, "Current input_channel: %d, input_name: %s\n",
-           s->channel, input.name);
+    av_log(s1, AV_LOG_DEBUG, "Current input_channel: %d, input_name: %s, input_std: %"PRIx64"\n",
+           s->channel, input.name, (uint64_t)input.std);
 
     if (s->list_format) {
         list_formats(s1, s->fd, s->list_format);
@@ -859,6 +870,9 @@ static int v4l2_read_header(AVFormatContext *s1)
     }
 
     avpriv_set_pts_info(st, 64, 1, 1000000); /* 64 bits pts in us */
+
+    if ((res = v4l2_set_parameters(s1)) < 0)
+        return res;
 
     if (s->pixel_format) {
         AVCodec *codec = avcodec_find_decoder_by_name(s->pixel_format);
@@ -911,9 +925,6 @@ static int v4l2_read_header(AVFormatContext *s1)
 
     s->frame_format = desired_format;
 
-    if ((res = v4l2_set_parameters(s1)) < 0)
-        return res;
-
     st->codec->pix_fmt = avpriv_fmt_v4l2ff(desired_format, codec_id);
     s->frame_size =
         avpicture_get_size(st->codec->pix_fmt, s->width, s->height);
@@ -931,13 +942,17 @@ static int v4l2_read_header(AVFormatContext *s1)
     if (codec_id == AV_CODEC_ID_RAWVIDEO)
         st->codec->codec_tag =
             avcodec_pix_fmt_to_codec_tag(st->codec->pix_fmt);
+    else if (codec_id == AV_CODEC_ID_H264) {
+        st->need_parsing = AVSTREAM_PARSE_HEADERS;
+    }
     if (desired_format == V4L2_PIX_FMT_YVU420)
         st->codec->codec_tag = MKTAG('Y', 'V', '1', '2');
     else if (desired_format == V4L2_PIX_FMT_YVU410)
         st->codec->codec_tag = MKTAG('Y', 'V', 'U', '9');
     st->codec->width = s->width;
     st->codec->height = s->height;
-    st->codec->bit_rate = s->frame_size * av_q2d(st->avg_frame_rate) * 8;
+    if (st->avg_frame_rate.den)
+        st->codec->bit_rate = s->frame_size * av_q2d(st->avg_frame_rate) * 8;
 
     return 0;
 }

@@ -233,6 +233,9 @@ static int flv_write_header(AVFormatContext *s)
             audio_enc = enc;
             if (get_audio_flags(s, enc) < 0)
                 return AVERROR_INVALIDDATA;
+            if (enc->codec_id == AV_CODEC_ID_PCM_S16BE)
+                av_log(s, AV_LOG_WARNING,
+                       "16-bit big-endian audio in flv is valid but most likely unplayable (hardware dependent); use s16le\n");
             break;
         case AVMEDIA_TYPE_DATA:
             if (enc->codec_id != AV_CODEC_ID_TEXT) {
@@ -460,8 +463,8 @@ static int flv_write_packet(AVFormatContext *s, AVPacket *pkt)
     uint8_t *data = NULL;
     int flags = -1, flags_size, ret;
 
-    if (enc->codec_id == AV_CODEC_ID_VP6 || enc->codec_id == AV_CODEC_ID_VP6F ||
-        enc->codec_id == AV_CODEC_ID_VP6A || enc->codec_id == AV_CODEC_ID_AAC)
+    if (enc->codec_id == AV_CODEC_ID_VP6F || enc->codec_id == AV_CODEC_ID_VP6A ||
+        enc->codec_id == AV_CODEC_ID_VP6  || enc->codec_id == AV_CODEC_ID_AAC)
         flags_size = 2;
     else if (enc->codec_id == AV_CODEC_ID_H264 || enc->codec_id == AV_CODEC_ID_MPEG4)
         flags_size = 5;
@@ -539,7 +542,7 @@ static int flv_write_packet(AVFormatContext *s, AVPacket *pkt)
 
     if (enc->codec_type == AVMEDIA_TYPE_DATA) {
         int data_size;
-        int metadata_size_pos = avio_tell(pb);
+        int64_t metadata_size_pos = avio_tell(pb);
         avio_w8(pb, AMF_DATA_TYPE_STRING);
         put_amf_string(pb, "onTextData");
         avio_w8(pb, AMF_DATA_TYPE_MIXEDARRAY);
@@ -563,13 +566,17 @@ static int flv_write_packet(AVFormatContext *s, AVPacket *pkt)
         avio_w8(pb,flags);
         if (enc->codec_id == AV_CODEC_ID_VP6)
             avio_w8(pb,0);
-        if (enc->codec_id == AV_CODEC_ID_VP6F || enc->codec_id == AV_CODEC_ID_VP6A)
-            avio_w8(pb, enc->extradata_size ? enc->extradata[0] : 0);
-        else if (enc->codec_id == AV_CODEC_ID_AAC)
-            avio_w8(pb,1); // AAC raw
+        if (enc->codec_id == AV_CODEC_ID_VP6F || enc->codec_id == AV_CODEC_ID_VP6A) {
+            if (enc->extradata_size)
+                avio_w8(pb, enc->extradata[0]);
+            else
+                avio_w8(pb, ((FFALIGN(enc->width,  16) - enc->width) << 4) |
+                             (FFALIGN(enc->height, 16) - enc->height));
+        } else if (enc->codec_id == AV_CODEC_ID_AAC)
+            avio_w8(pb, 1); // AAC raw
         else if (enc->codec_id == AV_CODEC_ID_H264 || enc->codec_id == AV_CODEC_ID_MPEG4) {
-            avio_w8(pb,1); // AVC NALU
-            avio_wb24(pb,pkt->pts - pkt->dts);
+            avio_w8(pb, 1); // AVC NALU
+            avio_wb24(pb, pkt->pts - pkt->dts);
         }
 
         avio_write(pb, data ? data : pkt->data, size);

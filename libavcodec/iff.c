@@ -25,6 +25,8 @@
  * IFF ACBM/DEEP/ILBM/PBM bitmap decoder
  */
 
+#include <stdint.h>
+
 #include "libavutil/imgutils.h"
 #include "bytestream.h"
 #include "avcodec.h"
@@ -184,7 +186,7 @@ static int cmap_read_palette(AVCodecContext *avctx, uint32_t *pal)
  *
  * @param avctx the AVCodecContext where to extract extra context to
  * @param avpkt the AVPacket to extract extra context from or NULL to use avctx
- * @return 0 in case of success, a negative error code otherwise
+ * @return >= 0 in case of success, a negative error code otherwise
  */
 static int extract_header(AVCodecContext *const avctx,
                           const AVPacket *const avpkt) {
@@ -318,6 +320,16 @@ static int extract_header(AVCodecContext *const avctx,
     return 0;
 }
 
+static av_cold int decode_end(AVCodecContext *avctx)
+{
+    IffContext *s = avctx->priv_data;
+    av_frame_free(&s->frame);
+    av_freep(&s->planebuf);
+    av_freep(&s->ham_buf);
+    av_freep(&s->ham_palbuf);
+    return 0;
+}
+
 static av_cold int decode_init(AVCodecContext *avctx)
 {
     IffContext *s = avctx->priv_data;
@@ -360,8 +372,10 @@ static av_cold int decode_init(AVCodecContext *avctx)
 
     s->bpp = avctx->bits_per_coded_sample;
     s->frame = av_frame_alloc();
-    if (!s->frame)
+    if (!s->frame) {
+        decode_end(avctx);
         return AVERROR(ENOMEM);
+    }
 
     if ((err = extract_header(avctx, NULL)) < 0)
         return err;
@@ -474,16 +488,20 @@ static int decode_byterun(uint8_t *dst, int dst_size,
         unsigned length;
         const int8_t value = *buf++;
         if (value >= 0) {
-            length = value + 1;
-            memcpy(dst + x, buf, FFMIN3(length, dst_size - x, buf_end - buf));
+            length = FFMIN3(value + 1, dst_size - x, buf_end - buf);
+            memcpy(dst + x, buf, length);
             buf += length;
         } else if (value > -128) {
-            length = -value + 1;
-            memset(dst + x, *buf++, FFMIN(length, dst_size - x));
+            length = FFMIN(-value + 1, dst_size - x);
+            memset(dst + x, *buf++, length);
         } else { // noop
             continue;
         }
         x += length;
+    }
+    if (x < dst_size) {
+        av_log(NULL, AV_LOG_WARNING, "decode_byterun ended before plane size\n");
+        memset(dst+x, 0, dst_size - x);
     }
     return buf - buf_start;
 }
@@ -858,19 +876,10 @@ static int decode_frame(AVCodecContext *avctx,
     return buf_size;
 }
 
-static av_cold int decode_end(AVCodecContext *avctx)
-{
-    IffContext *s = avctx->priv_data;
-    av_frame_free(&s->frame);
-    av_freep(&s->planebuf);
-    av_freep(&s->ham_buf);
-    av_freep(&s->ham_palbuf);
-    return 0;
-}
-
 #if CONFIG_IFF_ILBM_DECODER
 AVCodec ff_iff_ilbm_decoder = {
     .name           = "iff",
+    .long_name      = NULL_IF_CONFIG_SMALL("IFF"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_IFF_ILBM,
     .priv_data_size = sizeof(IffContext),
@@ -878,12 +887,12 @@ AVCodec ff_iff_ilbm_decoder = {
     .close          = decode_end,
     .decode         = decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("IFF"),
 };
 #endif
 #if CONFIG_IFF_BYTERUN1_DECODER
 AVCodec ff_iff_byterun1_decoder = {
     .name           = "iff",
+    .long_name      = NULL_IF_CONFIG_SMALL("IFF"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_IFF_BYTERUN1,
     .priv_data_size = sizeof(IffContext),
@@ -891,6 +900,5 @@ AVCodec ff_iff_byterun1_decoder = {
     .close          = decode_end,
     .decode         = decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("IFF"),
 };
 #endif
